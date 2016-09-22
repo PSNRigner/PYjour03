@@ -1,0 +1,4 @@
+*.dxml
+__pycache__
+main.py
+.idea
