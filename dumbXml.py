@@ -1,4 +1,4 @@
-from pyrser import meta
+from pyrser import meta, grammar
 from pyrser.parsing import node
 
 
@@ -108,3 +108,102 @@ def indent(depth):
         result += "\t"
         i += 1
     return result
+
+
+# noinspection PyPep8Naming
+class dxmlParser(grammar.Grammar):
+    entry = "Xml"
+    grammar = """
+    Xml = [ Object:o #finish(_,o) eof ]
+    Object = [ [ None | Single | Block ]:>_ ]
+    None = [ '<' FieldName:f "/>" #add_none(_,f) ]
+    Single = [ '<' FieldName:f [ Type:t ]? '=' Value:v #add_single(_,f,t,v) "/>" ]
+    Block = [ '<' FieldName:f Type:t '>' [ Object:o #add_child(_,o) ]* "</" FieldName '>' #add_block(_,f,t) ]
+    FieldName = [ [ '.' ]? id ]
+    Type = [ [ "type" "=" id ] | [ id ] ]
+    Value = [ id:>_ | Float:>_ | num:>_ | String:>_ ]
+    String = [ [ "'" ]? [ [ [ 'a'..'z' ] | [ 'A'..'Z' ] | [ '0'..'9' ] | [ ' ' ] | [ '_' ] ]+ ]:>_ [ "'" ]? ]
+    Float = [ [ [ [ '0'..'9' ] | [ '.' ] | [ '-' ] | [ '+' ] | [ 'e' ] ]+ ] ]
+    """
+
+
+@meta.hook(dxmlParser)
+def debug(self, arg):
+    print(">> ", self.value(arg))
+    return True
+
+
+# noinspection PyUnusedLocal
+@meta.hook(dxmlParser)
+def finish(self, ast, o):
+    for i in o.children:
+        k = i.val[0].rstrip()
+        v = i.val[1]
+        if isinstance(v, node.Node):
+            recur_node(i)
+            v = i
+        setattr(ast, k, v)
+    return True
+
+
+def recur_node(o):
+    if hasattr(o, 'children'):
+        for i in o.children:
+            k = i.val[0].rstrip()
+            v = i.val[1]
+            if type(v) == node.Node:
+                recur_node(v)
+            setattr(o, k, v)
+
+
+@meta.hook(dxmlParser)
+def add_single(self, ast, f, t, v):
+    fv = self.value(f)
+    tv = self.value(t)
+    vv = self.value(v)
+    vv = vv.rstrip().strip("'")
+    tmp = {
+        "str": lambda x: x,
+        "int": lambda x: int(x),
+        "float": lambda x: float(x),
+        "bool": lambda x: bool(x)
+    }.get(tv)(vv)
+    ast.val = fv, tmp
+    return True
+
+
+@meta.hook(dxmlParser)
+def add_none(self, ast, f):
+    fv = self.value(f)
+    ast.val = fv, None
+    return True
+
+
+# noinspection PyUnusedLocal
+@meta.hook(dxmlParser)
+def add_child(self, ast, o):
+    if hasattr(ast, 'children'):
+        ast.children.append(o)
+    else:
+        ast.children = [o]
+    return True
+
+
+@meta.hook(dxmlParser)
+def add_block(self, ast, f, t):
+    fv = self.value(f)
+    tv = self.value(t)
+    if tv.startswith("type="):
+        tv = tv[5:]
+    if tv.startswith("type ="):
+        tv = tv[6:]
+    if tv[0] == ' ':
+        tv = tv[1:]
+    tmp = {
+        "list": lambda: list(),
+        "set": lambda: set(),
+        "dict": lambda: dict(),
+        "object": lambda: node.Node()
+    }[tv]()
+    ast.val = fv, tmp
+    return True
