@@ -116,16 +116,18 @@ class dxmlParser(grammar.Grammar):
     entry = "Xml"
     grammar = """
     Xml = [ Object:o #finish(_,o) eof ]
-    Object = [ [ None | Single | Block | Blob | SetSingle ]:>_ ]
-    None = [ '<' FieldName:f [ [ "__key" "=" String ] | [ "__value" "=" num] ]? "/>" #add_none(_,f) ]
-    Single = [ '<' FieldName:f [ [ "__key" "=" String ] | [ "__value" "=" num] ]? [ Type:t ]? '=' Value:v #add_single(_,f,t,v) "/>" ]
-    Block = [ '<' FieldName:f [ [ "__key" "=" String ] | [ "__value" "=" num] ]? Type:t '>' [ Object:o #add_child(_,o) ]* "</" FieldName '>' #add_block(_,f,t) ]
+    Object = [ [ None | DictSingle | DictBlock | Single | Block | Blob | SetSingle ]:>_ ]
+    None = [ '<' FieldName:f [ [ "__key" "=" String ] | [ "__value" "=" num] ]? "/>" ]
+    Single = [ '<' FieldName:f [ "__value" "=" num ]? [ Type:t ]? '=' Value:v #add_single(_,f,t,v) "/>" ]
+    DictSingle = [ '<' FieldName [ "__key" "=" String:f ] [ Type:t ]? '=' Value:v #add_single(_,f,t,v) "/>" ]
+    Block = [ '<' FieldName:f [ "__value" "=" num ]? Type:t '>' [ Object:o #add_child(_,o) ]* "</" FieldName '>' #add_block(_,f,t) ]
+    DictBlock = [ '<' FieldName [ "__key" "=" String:f ] Type:t '>' [ Object:o #add_child(_,o) ]* "</" FieldName '>' #add_block(_,f,t) ]
     Blob = [ '<' FieldName:f Type '>' [ BlobData:o ] "</" FieldName '>' #add_blob(_,f,o) ]
     SetSingle = [ '<' String:s "/>" #add_set(_,s) ]
     FieldName = [ [ '.' ]? id ]
     Type = [ [ "type" "=" id ] | [ id ] ]
     Value = [ id:>_ | Float:>_ | num:>_ | String:>_ ]
-    String = [ [ "'" ]? [ [ [ 'a'..'z' ] | [ 'A'..'Z' ] | [ '0'..'9' ] | [ ' ' ] | [ '_' ] ]+ ]:>_ [ "'" ]? ]
+    String = [ [ "'" ]? [ [ [ 'a'..'z' ] | [ 'A'..'Z' ] | [ '0'..'9' ] | [ ' ' ] | [ '_' ] ]+ ]:s [ "'" ]? ]
     Float = [ [ [ [ '0'..'9' ] | [ '.' ] | [ '-' ] | [ '+' ] | [ 'e' ] ]+ ] ]
     BlobData = [ [ [ [ 'A'..'Z' ] | [ '0'..'9' ] ] [ [ 'A'..'Z' ] | [ '0'..'9' ] ] ]+ ]
     """
@@ -161,6 +163,8 @@ def finish_recur(ast, o):
                     finish_recur(v, i)
                 elif isinstance(v, set):
                     finish_recur(v, i)
+                elif isinstance(v, dict):
+                    finish_recur(v, i)
 
                 if isinstance(ast, node.Node):
                     setattr(ast, k, v)
@@ -168,6 +172,8 @@ def finish_recur(ast, o):
                     ast.append(v)
                 elif isinstance(ast, set):
                     ast.add(v)
+                elif isinstance(ast, dict):
+                    ast[k] = v
 
 
 def recur_node(o):
@@ -182,7 +188,7 @@ def recur_node(o):
 
 @meta.hook(dxmlParser)
 def add_single(self, ast, f, t, v):
-    fv = self.value(f)
+    fv = self.value(f).strip().strip("'")
     tv = self.value(t)
     vv = self.value(v)
     vv = vv.rstrip().strip("'")
@@ -215,7 +221,7 @@ def add_child(self, ast, o):
 
 @meta.hook(dxmlParser)
 def add_block(self, ast, f, t):
-    fv = self.value(f)
+    fv = self.value(f).strip().strip("'")
     tv = self.value(t)
     if tv.startswith("type="):
         tv = tv[5:]
@@ -237,7 +243,7 @@ def add_block(self, ast, f, t):
 # noinspection PyUnresolvedReferences
 @meta.hook(dxmlParser)
 def add_set(self, ast, s):
-    sv = self.value(s)
+    sv = self.value(s).strip().strip("'")
     ast.set_tmp = sv
     return True
 
