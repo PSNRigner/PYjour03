@@ -1,5 +1,6 @@
 from pyrser import meta, grammar
 from pyrser.parsing import node
+import binascii
 
 
 @meta.add_method(node.Node)
@@ -115,15 +116,18 @@ class dxmlParser(grammar.Grammar):
     entry = "Xml"
     grammar = """
     Xml = [ Object:o #finish(_,o) eof ]
-    Object = [ [ None | Single | Block ]:>_ ]
-    None = [ '<' FieldName:f "/>" #add_none(_,f) ]
-    Single = [ '<' FieldName:f [ Type:t ]? '=' Value:v #add_single(_,f,t,v) "/>" ]
-    Block = [ '<' FieldName:f Type:t '>' [ Object:o #add_child(_,o) ]* "</" FieldName '>' #add_block(_,f,t) ]
+    Object = [ [ None | Single | Block | Blob | SetSingle ]:>_ ]
+    None = [ '<' FieldName:f [ [ "__key" "=" String ] | [ "__value" "=" num] ]? "/>" #add_none(_,f) ]
+    Single = [ '<' FieldName:f [ [ "__key" "=" String ] | [ "__value" "=" num] ]? [ Type:t ]? '=' Value:v #add_single(_,f,t,v) "/>" ]
+    Block = [ '<' FieldName:f [ [ "__key" "=" String ] | [ "__value" "=" num] ]? Type:t '>' [ Object:o #add_child(_,o) ]* "</" FieldName '>' #add_block(_,f,t) ]
+    Blob = [ '<' FieldName:f Type '>' [ BlobData:o ] "</" FieldName '>' #add_blob(_,f,o) ]
+    SetSingle = [ '<' String:s "/>" #add_set(_,s) ]
     FieldName = [ [ '.' ]? id ]
     Type = [ [ "type" "=" id ] | [ id ] ]
     Value = [ id:>_ | Float:>_ | num:>_ | String:>_ ]
     String = [ [ "'" ]? [ [ [ 'a'..'z' ] | [ 'A'..'Z' ] | [ '0'..'9' ] | [ ' ' ] | [ '_' ] ]+ ]:>_ [ "'" ]? ]
     Float = [ [ [ [ '0'..'9' ] | [ '.' ] | [ '-' ] | [ '+' ] | [ 'e' ] ]+ ] ]
+    BlobData = [ [ [ [ 'A'..'Z' ] | [ '0'..'9' ] ] [ [ 'A'..'Z' ] | [ '0'..'9' ] ] ]+ ]
     """
 
 
@@ -136,14 +140,34 @@ def debug(self, arg):
 # noinspection PyUnusedLocal
 @meta.hook(dxmlParser)
 def finish(self, ast, o):
-    for i in o.children:
-        k = i.val[0].rstrip()
-        v = i.val[1]
-        if isinstance(v, node.Node):
-            recur_node(i)
-            v = i
-        setattr(ast, k, v)
+    finish_recur(ast, o)
     return True
+
+
+def finish_recur(ast, o):
+    if hasattr(o, 'children'):
+        for i in o.children:
+            if hasattr(i, 'val'):
+                k = i.val[0].rstrip()
+                v = i.val[1]
+                if isinstance(v, node.Node):
+                    recur_node(i)
+                    v = i
+                if isinstance(v, set) and hasattr(i, 'children'):
+                    for j in i.children:
+                        if hasattr(j, 'set_tmp'):
+                            v.add(j.set_tmp)
+                if isinstance(v, list):
+                    finish_recur(v, i)
+                elif isinstance(v, set):
+                    finish_recur(v, i)
+
+                if isinstance(ast, node.Node):
+                    setattr(ast, k, v)
+                elif isinstance(ast, list):
+                    ast.append(v)
+                elif isinstance(ast, set):
+                    ast.add(v)
 
 
 def recur_node(o):
@@ -203,7 +227,24 @@ def add_block(self, ast, f, t):
         "list": lambda: list(),
         "set": lambda: set(),
         "dict": lambda: dict(),
-        "object": lambda: node.Node()
+        "object": lambda: node.Node(),
+        "blob": lambda: bytes()
     }[tv]()
     ast.val = fv, tmp
+    return True
+
+
+# noinspection PyUnresolvedReferences
+@meta.hook(dxmlParser)
+def add_set(self, ast, s):
+    sv = self.value(s)
+    ast.set_tmp = sv
+    return True
+
+
+@meta.hook(dxmlParser)
+def add_blob(self, ast, f, s):
+    fv = self.value(f)
+    sv = binascii.unhexlify(self.value(s).strip().replace(' ', ''))
+    ast.val = fv, sv
     return True
